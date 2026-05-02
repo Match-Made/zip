@@ -25,10 +25,12 @@ type Reader struct {
 	r       io.ReaderAt
 	File    []*File
 	Comment string
+	disks   []diskInfo // non-nil for multi-disk (split) archives
 }
 
 type ReadCloser struct {
-	f *os.File
+	f       *os.File
+	extras  []io.Closer // additional disks for multi-disk archives
 	Reader
 }
 
@@ -37,6 +39,7 @@ type File struct {
 	zipr         io.ReaderAt
 	zipsize      int64
 	headerOffset int64
+	diskNumber   uint32 // disk on which the local header lives
 }
 
 func (f *File) hasDataDescriptor() bool {
@@ -74,12 +77,18 @@ func NewReader(r io.ReaderAt, size int64) (*Reader, error) {
 }
 
 func (z *Reader) init(r io.ReaderAt, size int64) error {
-	end, err := readDirectoryEnd(r, size)
+	end, err := readDirectoryEnd(r, size, z.disks)
 	if err != nil {
 		return err
 	}
 	if end.directoryRecords > uint64(size)/fileHeaderLen {
 		return fmt.Errorf("archive/zip: TOC declares impossible %d files in %d byte zip", end.directoryRecords, size)
+	}
+	if len(z.disks) > 0 {
+		if int(end.dirDiskNbr) >= len(z.disks) {
+			return ErrFormat
+		}
+		end.directoryOffset += uint64(z.disks[end.dirDiskNbr].cumulative)
 	}
 	z.r = r
 	z.File = make([]*File, 0, end.directoryRecords)
@@ -103,6 +112,12 @@ func (z *Reader) init(r io.ReaderAt, size int64) error {
 		if err != nil {
 			return err
 		}
+		if len(z.disks) > 0 {
+			if int(f.diskNumber) >= len(z.disks) {
+				return ErrFormat
+			}
+			f.headerOffset += z.disks[f.diskNumber].cumulative
+		}
 		z.File = append(z.File, f)
 	}
 	if uint16(len(z.File)) != uint16(end.directoryRecords) { // only compare 16 bits here
@@ -115,7 +130,16 @@ func (z *Reader) init(r io.ReaderAt, size int64) error {
 
 // Close closes the Zip file, rendering it unusable for I/O.
 func (rc *ReadCloser) Close() error {
-	return rc.f.Close()
+	var firstErr error
+	for _, c := range rc.extras {
+		if err := c.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	if err := rc.f.Close(); err != nil && firstErr == nil {
+		firstErr = err
+	}
+	return firstErr
 }
 
 // DataOffset returns the offset of the file's possibly-compressed
@@ -270,7 +294,8 @@ func readDirectoryHeader(f *File, r io.Reader) error {
 	filenameLen := int(b.uint16())
 	extraLen := int(b.uint16())
 	commentLen := int(b.uint16())
-	b = b[4:] // skipped start disk number and internal attributes (2x uint16)
+	f.diskNumber = uint32(b.uint16())
+	b = b[2:] // skip internal file attributes
 	f.ExternalAttrs = b.uint32()
 	f.headerOffset = int64(b.uint32())
 	d := make([]byte, filenameLen+extraLen+commentLen)
@@ -301,6 +326,9 @@ func readDirectoryHeader(f *File, r io.Reader) error {
 				}
 				if len(eb) >= 8 {
 					f.headerOffset = int64(eb.uint64())
+				}
+				if len(eb) >= 4 {
+					f.diskNumber = eb.uint32()
 				}
 			case winzipAesExtraId:
 				// grab the AE version
@@ -367,7 +395,7 @@ func readDataDescriptor(r io.Reader, f *File) error {
 	return nil
 }
 
-func readDirectoryEnd(r io.ReaderAt, size int64) (dir *directoryEnd, err error) {
+func readDirectoryEnd(r io.ReaderAt, size int64, disks []diskInfo) (dir *directoryEnd, err error) {
 	// look for directoryEndSignature in the last 1k, then in the last 65k
 	var buf []byte
 	var directoryEndOffset int64
@@ -406,8 +434,14 @@ func readDirectoryEnd(r io.ReaderAt, size int64) (dir *directoryEnd, err error) 
 	}
 	d.comment = string(b[:l])
 
-	p, err := findDirectory64End(r, directoryEndOffset)
+	p, zip64Disk, err := findDirectory64End(r, directoryEndOffset)
 	if err == nil && p >= 0 {
+		if len(disks) > 0 {
+			if int(zip64Disk) >= len(disks) {
+				return nil, ErrFormat
+			}
+			p += disks[zip64Disk].cumulative
+		}
 		err = readDirectory64End(r, p, d)
 	}
 	if err != nil {
@@ -422,24 +456,24 @@ func readDirectoryEnd(r io.ReaderAt, size int64) (dir *directoryEnd, err error) 
 }
 
 // findDirectory64End tries to read the zip64 locator just before the
-// directory end and returns the offset of the zip64 directory end if
-// found.
-func findDirectory64End(r io.ReaderAt, directoryEndOffset int64) (int64, error) {
+// directory end. It returns the per-disk offset of the zip64 EOCD and
+// the number of the disk that record lives on (zero when not zip64).
+func findDirectory64End(r io.ReaderAt, directoryEndOffset int64) (int64, uint32, error) {
 	locOffset := directoryEndOffset - directory64LocLen
 	if locOffset < 0 {
-		return -1, nil // no need to look for a header outside the file
+		return -1, 0, nil
 	}
 	buf := make([]byte, directory64LocLen)
 	if _, err := r.ReadAt(buf, locOffset); err != nil {
-		return -1, err
+		return -1, 0, err
 	}
 	b := readBuf(buf)
 	if sig := b.uint32(); sig != directory64LocSignature {
-		return -1, nil
+		return -1, 0, nil
 	}
-	b = b[4:]       // skip number of the disk with the start of the zip64 end of central directory
-	p := b.uint64() // relative offset of the zip64 end of central directory record
-	return int64(p), nil
+	zip64Disk := b.uint32()
+	p := b.uint64()
+	return int64(p), zip64Disk, nil
 }
 
 // readDirectory64End reads the zip64 directory end and updates the

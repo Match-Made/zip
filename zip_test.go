@@ -315,7 +315,7 @@ func testZip64DirectoryRecordLength(buf *rleBuffer, t *testing.T) {
 	}
 
 	sigOff := findSignatureInBlock(d)
-	dirOff, err := findDirectory64End(buf, buf.Size()-int64(len(d))+int64(sigOff))
+	dirOff, _, err := findDirectory64End(buf, buf.Size()-int64(len(d))+int64(sigOff))
 	if err != nil {
 		t.Fatal("findDirectory64End:", err)
 	}

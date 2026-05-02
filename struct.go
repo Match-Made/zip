@@ -7,7 +7,8 @@ Package zip provides support for reading and writing password protected ZIP arch
 
 See: http://www.pkware.com/documents/casestudies/APPNOTE.TXT
 
-This package does not support disk spanning.
+Reading split (multi-disk) archives is supported via OpenReaderMultipart.
+Writing split archives is not supported.
 
 A note about ZIP64:
 
@@ -151,12 +152,12 @@ func FileInfoHeader(fi os.FileInfo) (*FileHeader, error) {
 }
 
 type directoryEnd struct {
-	diskNbr            uint32 // unused
-	dirDiskNbr         uint32 // unused
-	dirRecordsThisDisk uint64 // unused
+	diskNbr            uint32
+	dirDiskNbr         uint32
+	dirRecordsThisDisk uint64
 	directoryRecords   uint64
 	directorySize      uint64
-	directoryOffset    uint64 // relative to file
+	directoryOffset    uint64
 	commentLen         uint16
 	comment            string
 }
