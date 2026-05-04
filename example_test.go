@@ -11,7 +11,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/Match-Made/zip"
+	"github.com/yeka/zip"
 )
 
 func ExampleWriter() {
