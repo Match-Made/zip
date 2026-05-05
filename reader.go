@@ -23,6 +23,7 @@ var (
 	ErrAlgorithm         = errors.New("zip: unsupported compression algorithm")
 	ErrChecksum          = errors.New("zip: checksum error")
 	ErrPartCountMismatch = errors.New("zip: part count mismatch")
+	ErrNoSuchFile        = errors.New("zip: no such file")
 )
 
 type Reader struct {
@@ -79,6 +80,7 @@ func OpenReader(name string) (r *ReadCloser, err error) {
 		parts = append(parts, io.NewSectionReader(f, 0, size))
 	}
 	if part == 0 {
+		err = ErrNoSuchFile
 		return
 	} else if part > 1 {
 		closers = append(closers[1:], closers[0])
@@ -105,6 +107,9 @@ func NewReader(r io.ReaderAt, size int64) (*Reader, error) {
 }
 
 func NewMultipartReader(r []readerutil.SizeReaderAt) (*Reader, error) {
+	if len(r) == 0 {
+		return nil, ErrNoSuchFile
+	}
 	zr := new(Reader)
 	if err := zr.init(r); err != nil {
 		return nil, err
