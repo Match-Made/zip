@@ -16,6 +16,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"go4.org/readerutil"
 )
 
 type ZipTest struct {
@@ -429,6 +431,77 @@ func TestInvalidFiles(t *testing.T) {
 	_, err = NewReader(bytes.NewReader(b), size)
 	if err != ErrFormat {
 		t.Errorf("sigs: error=%v, want %v", err, ErrFormat)
+	}
+}
+
+func TestNewMultipartReader(t *testing.T) {
+	nzip, err := os.Open("./testdata/multipart/datasplit.zip")
+	if err != nil {
+		t.Fatalf("Failed to open multipart zip file: %v", err)
+	}
+	defer nzip.Close()
+	nzipInfo, err := nzip.Stat()
+	if err != nil {
+		t.Fatalf("Failed to stat multipart zip file: %v", err)
+	}
+
+	firstPart, err := os.Open("./testdata/multipart/datasplit.z01")
+	if err != nil {
+		t.Fatalf("Failed to open multipart zip part .z01: %v", err)
+	}
+	defer firstPart.Close()
+	firstInfo, err := firstPart.Stat()
+	if err != nil {
+		t.Fatalf("Failed to stat multipart zip part .z01: %v", err)
+	}
+
+	secondPart, err := os.Open("./testdata/multipart/datasplit.z02")
+	if err != nil {
+		t.Fatalf("Failed to open multipart zip part .z02: %v", err)
+	}
+	defer secondPart.Close()
+	secondInfo, err := secondPart.Stat()
+	if err != nil {
+		t.Fatalf("Failed to stat multipart zip part .z02: %v", err)
+	}
+
+	parts := []readerutil.SizeReaderAt{
+		io.NewSectionReader(firstPart, 0, firstInfo.Size()),
+		io.NewSectionReader(secondPart, 0, secondInfo.Size()),
+		io.NewSectionReader(nzip, 0, nzipInfo.Size()),
+	}
+
+	zr, err := NewMultipartReader(parts)
+	if err != nil {
+		t.Fatalf("Failed to create multipart reader: %v", err)
+	}
+
+	if got, want := len(zr.File), 1; got != want {
+		t.Fatalf("multipart reader returned %d files, want %d", got, want)
+	}
+
+	f := zr.File[0]
+	if got, want := f.Name, "Users/nikko/Downloads/HeaderRight.png"; got != want {
+		t.Fatalf("unexpected entry name: got %q, want %q", got, want)
+	}
+
+	r, err := f.Open()
+	if err != nil {
+		t.Fatalf("Failed to open %s: %v", f.Name, err)
+	}
+	defer r.Close()
+
+	buf, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("Failed to read %s: %v", f.Name, err)
+	}
+
+	if got, want := len(buf), int(f.UncompressedSize64); got != want {
+		t.Fatalf("read %d bytes, want %d", got, want)
+	}
+
+	if got, want := len(buf), 152499; got != want {
+		t.Fatalf("unexpected size for %s: got %d, want %d", f.Name, got, want)
 	}
 }
 
