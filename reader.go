@@ -107,9 +107,6 @@ func NewReader(r io.ReaderAt, size int64) (*Reader, error) {
 }
 
 func NewMultipartReader(r []readerutil.SizeReaderAt) (*Reader, error) {
-	if len(r) == 0 {
-		return nil, ErrNoSuchFile
-	}
 	zr := new(Reader)
 	if err := zr.init(r); err != nil {
 		return nil, err
@@ -118,6 +115,9 @@ func NewMultipartReader(r []readerutil.SizeReaderAt) (*Reader, error) {
 }
 
 func (z *Reader) init(r []readerutil.SizeReaderAt) error {
+	if len(r) == 0 {
+		return ErrNoSuchFile
+	}
 	lastPart := r[len(r)-1]
 	lastPartSize := lastPart.Size()
 	end, err := readDirectoryEnd(lastPart, lastPartSize)
@@ -151,6 +151,12 @@ func (z *Reader) init(r []readerutil.SizeReaderAt) error {
 		}
 		if err != nil {
 			return err
+		}
+		if int(f.diskNb) >= len(r) {
+			return ErrPartCountMismatch
+		}
+		for i := int32(0); i < f.diskNb; i++ {
+			f.headerOffset += r[i].Size()
 		}
 		z.File = append(z.File, f)
 	}
