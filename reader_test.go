@@ -8,7 +8,6 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/hex"
-	"fmt"
 	"io"
 	"io/ioutil"
 	"os"
@@ -556,10 +555,6 @@ func TestNewMultipartReader(t *testing.T) {
 			zr, err := NewMultipartReader(parts)
 			if err != nil {
 				t.Fatalf("Failed to create multipart reader: %v", err)
-			}
-
-			for _, f := range zr.File {
-				fmt.Printf("file %s diskNb %d offset %d\n", f.Name, f.diskNb, f.headerOffset)
 			}
 
 			if got, want := len(zr.File), len(tc.files); got != want {
