@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"os"
@@ -435,104 +436,121 @@ func TestInvalidFiles(t *testing.T) {
 }
 
 func TestNewMultipartReader(t *testing.T) {
+	expectedFilesPng := map[string]int{
+		"Users/nikko/Downloads/HeaderRight.png": 152499,
+	}
 	testCases := []struct {
-		name            string
-		paths           []string
-		password        string
+		name string
+		// the order of the path matters, .zip should be last
+		paths    []string
+		password string
+		// key val of filename and content len
+		files           map[string]int
 		expectedReadErr string
 		expectedOpenErr string
 	}{
 		{
 			name: "success non-protected",
 			paths: []string{
-				"./testdata/multipart/datasplit.zip",
 				"./testdata/multipart/datasplit.z01",
 				"./testdata/multipart/datasplit.z02",
+				"./testdata/multipart/datasplit.zip",
 			},
+			files: expectedFilesPng,
 		},
 		{
 			name: "success non-protected - z64",
 			paths: []string{
-				"./testdata/multipart/datasplit-z64.zip",
 				"./testdata/multipart/datasplit-z64.z01",
 				"./testdata/multipart/datasplit-z64.z02",
+				"./testdata/multipart/datasplit-z64.zip",
 			},
+			files: expectedFilesPng,
 		},
 		{
 			name: "success protected",
 			paths: []string{
-				"./testdata/multipart/datasplit-protected.zip",
 				"./testdata/multipart/datasplit-protected.z01",
 				"./testdata/multipart/datasplit-protected.z02",
+				"./testdata/multipart/datasplit-protected.zip",
 			},
 			password: "test123",
+			files:    expectedFilesPng,
 		},
 		{
 			name: "success protected - z64",
 			paths: []string{
-				"./testdata/multipart/datasplit-protected-z64.zip",
 				"./testdata/multipart/datasplit-protected-z64.z01",
 				"./testdata/multipart/datasplit-protected-z64.z02",
+				"./testdata/multipart/datasplit-protected-z64.zip",
 			},
 			password: "test123",
+			files:    expectedFilesPng,
+		},
+		{
+			name: "success protected - multifiles multipart",
+			paths: []string{
+				"./testdata/multipart/datasplit-protected-multifiles.z01",
+				"./testdata/multipart/datasplit-protected-multifiles.z02",
+				"./testdata/multipart/datasplit-protected-multifiles.zip",
+			},
+			files: map[string]int{
+				"file1.txt": 53337,
+				"file2.txt": 53337,
+				"file3.txt": 53337,
+			},
+			password: "golang",
+		},
+		{
+			name: "success non-protected - multifiles multipart",
+			paths: []string{
+				"./testdata/multipart/datasplit-multifiles.z01",
+				"./testdata/multipart/datasplit-multifiles.z02",
+				"./testdata/multipart/datasplit-multifiles.zip",
+			},
+			files: map[string]int{
+				"file1.txt": 53337,
+				"file2.txt": 53337,
+				"file3.txt": 53337,
+			},
 		},
 		{
 			name: "failed protected - incorrect password",
 			paths: []string{
-				"./testdata/multipart/datasplit-protected.zip",
 				"./testdata/multipart/datasplit-protected.z01",
 				"./testdata/multipart/datasplit-protected.z02",
+				"./testdata/multipart/datasplit-protected.zip",
 			},
 			password:        "wrong",
+			files:           expectedFilesPng,
 			expectedReadErr: "flate: corrupt input before offset 1",
 		},
 		{
 			name: "failed protected - no password supplied",
 			paths: []string{
-				"./testdata/multipart/datasplit-protected.zip",
 				"./testdata/multipart/datasplit-protected.z01",
 				"./testdata/multipart/datasplit-protected.z02",
+				"./testdata/multipart/datasplit-protected.zip",
 			},
+			files:           expectedFilesPng,
 			expectedOpenErr: "zip: invalid password",
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			nzip, err := os.Open(tc.paths[0])
-			if err != nil {
-				t.Fatalf("Failed to open multipart zip file: %v", err)
-			}
-			defer nzip.Close()
-			nzipInfo, err := nzip.Stat()
-			if err != nil {
-				t.Fatalf("Failed to stat multipart zip file: %v", err)
-			}
-
-			firstPart, err := os.Open(tc.paths[1])
-			if err != nil {
-				t.Fatalf("Failed to open multipart zip part .z01: %v", err)
-			}
-			defer firstPart.Close()
-			firstInfo, err := firstPart.Stat()
-			if err != nil {
-				t.Fatalf("Failed to stat multipart zip part .z01: %v", err)
-			}
-
-			secondPart, err := os.Open(tc.paths[2])
-			if err != nil {
-				t.Fatalf("Failed to open multipart zip part .z02: %v", err)
-			}
-			defer secondPart.Close()
-			secondInfo, err := secondPart.Stat()
-			if err != nil {
-				t.Fatalf("Failed to stat multipart zip part .z02: %v", err)
-			}
-
-			parts := []readerutil.SizeReaderAt{
-				io.NewSectionReader(firstPart, 0, firstInfo.Size()),
-				io.NewSectionReader(secondPart, 0, secondInfo.Size()),
-				io.NewSectionReader(nzip, 0, nzipInfo.Size()),
+			parts := []readerutil.SizeReaderAt{}
+			for _, path := range tc.paths {
+				f, err := os.Open(path)
+				if err != nil {
+					t.Fatalf("Failed to open multipart zip part %s: %v", path, err)
+				}
+				defer f.Close()
+				stat, err := f.Stat()
+				if err != nil {
+					t.Fatalf("Failed to stat multipart zip file: %v", err)
+				}
+				parts = append(parts, io.NewSectionReader(f, 0, stat.Size()))
 			}
 
 			zr, err := NewMultipartReader(parts)
@@ -540,53 +558,58 @@ func TestNewMultipartReader(t *testing.T) {
 				t.Fatalf("Failed to create multipart reader: %v", err)
 			}
 
-			if got, want := len(zr.File), 1; got != want {
+			for _, f := range zr.File {
+				fmt.Printf("file %s diskNb %d offset %d\n", f.Name, f.diskNb, f.headerOffset)
+			}
+
+			if got, want := len(zr.File), len(tc.files); got != want {
 				t.Fatalf("multipart reader returned %d files, want %d", got, want)
 			}
 
-			f := zr.File[0]
-			if got, want := f.Name, "Users/nikko/Downloads/HeaderRight.png"; got != want {
-				t.Fatalf("unexpected entry name: got %q, want %q", got, want)
-			}
-
-			if tc.password != "" {
-				if !f.IsEncrypted() {
-					t.Fatalf("expected file %q to be encrypted", f.Name)
+			for _, f := range zr.File {
+				if _, ok := tc.files[f.Name]; !ok {
+					t.Fatalf("unexpected entry name: got %q", f.Name)
 				}
-				f.SetPassword(tc.password)
-			}
 
-			r, err := f.Open()
-
-			if tc.expectedOpenErr != "" {
-				if err.Error() != tc.expectedOpenErr {
-					t.Fatalf("expected error %q, got %q", tc.expectedOpenErr, err)
+				if tc.password != "" {
+					if !f.IsEncrypted() {
+						t.Fatalf("expected file %q to be encrypted", f.Name)
+					}
+					f.SetPassword(tc.password)
 				}
-				return
-			}
 
-			if err != nil {
-				t.Fatalf("Failed to open %s: %v", f.Name, err)
-			}
-			defer r.Close()
+				r, err := f.Open()
 
-			buf, err := io.ReadAll(r)
-
-			if tc.expectedReadErr != "" {
-				if err.Error() != tc.expectedReadErr {
-					t.Fatalf("expected error %q, got %q", tc.expectedReadErr, err)
+				if tc.expectedOpenErr != "" {
+					if err.Error() != tc.expectedOpenErr {
+						t.Fatalf("expected error %q, got %q", tc.expectedOpenErr, err)
+					}
+					return
 				}
-				return
-			}
 
-			if got, want := len(buf), int(f.UncompressedSize64); got != want {
-				t.Fatalf("read %d bytes, want %d", got, want)
-			}
+				if err != nil {
+					t.Fatalf("Failed to open %s: %v", f.Name, err)
+				}
+				defer r.Close()
 
-			if got, want := len(buf), 152499; got != want {
-				t.Fatalf("unexpected size for %s: got %d, want %d", f.Name, got, want)
-			}
+				buf, err := io.ReadAll(r)
 
+				if tc.expectedReadErr != "" {
+					if err.Error() != tc.expectedReadErr {
+						t.Fatalf("expected error %q, got %q", tc.expectedReadErr, err)
+					}
+					return
+				}
+
+				if got, want := len(buf), int(f.UncompressedSize64); got != want {
+					t.Fatalf("read %d bytes, want %d", got, want)
+				}
+
+				if got, want := len(buf), tc.files[f.Name]; got != want {
+					t.Fatalf("unexpected size for %s: got %d, want %d", f.Name, got, want)
+				}
+
+			}
 		})
 	}
 }
