@@ -451,11 +451,28 @@ func TestNewMultipartReader(t *testing.T) {
 			},
 		},
 		{
+			name: "success non-protected - z64",
+			paths: []string{
+				"./testdata/multipart/datasplit-z64.zip",
+				"./testdata/multipart/datasplit-z64.z01",
+				"./testdata/multipart/datasplit-z64.z02",
+			},
+		},
+		{
 			name: "success protected",
 			paths: []string{
 				"./testdata/multipart/datasplit-protected.zip",
 				"./testdata/multipart/datasplit-protected.z01",
 				"./testdata/multipart/datasplit-protected.z02",
+			},
+			password: "test123",
+		},
+		{
+			name: "success protected - z64",
+			paths: []string{
+				"./testdata/multipart/datasplit-protected-z64.zip",
+				"./testdata/multipart/datasplit-protected-z64.z01",
+				"./testdata/multipart/datasplit-protected-z64.z02",
 			},
 			password: "test123",
 		},
