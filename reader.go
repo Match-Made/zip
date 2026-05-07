@@ -152,22 +152,20 @@ func (z *Reader) init(r []readerutil.SizeReaderAt) error {
 		if err != nil {
 			return err
 		}
+		if len(r) > 1 {
+			if int(f.diskNb) >= len(r) {
+				return ErrPartCountMismatch
+			}
+			for i := int32(0); i < f.diskNb; i++ {
+				f.headerOffset += r[i].Size()
+			}
+		}
 		z.File = append(z.File, f)
 	}
 	if uint16(len(z.File)) != uint16(end.directoryRecords) { // only compare 16 bits here
 		// Return the readDirectoryHeader error if we read
 		// the wrong number of directory entries.
 		return err
-	}
-
-	cumul := make([]int64, len(r))
-	for i := 1; i < len(r); i++ {
-		cumul[i] = cumul[i-1] + r[i-1].Size()
-	}
-	for _, f := range z.File {
-		if f.diskNb > 0 && int(f.diskNb) < len(cumul) {
-			f.headerOffset += cumul[f.diskNb]
-		}
 	}
 	return nil
 }
