@@ -1,4 +1,4 @@
-module github.com/yeka/zip
+module github.com/Match-Made/zip
 
 go 1.25.5
 
