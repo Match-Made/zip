@@ -27,7 +27,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/Match-Made/zip"
+	"github.com/yeka/zip"
 )
 
 func main() {
@@ -60,7 +60,7 @@ import (
 	"io/ioutil"
 	"log"
 
-	"github.com/Match-Made/zip"
+	"github.com/yeka/zip"
 )
 
 func main() {
