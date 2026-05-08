@@ -357,18 +357,27 @@ func readDirectoryHeader(f *File, r io.Reader) error {
 			eb := readBuf(b[:size])
 			switch tag {
 			case zip64ExtraId:
-				// update directory values from the zip64 extra block
-				if len(eb) >= 8 {
+				// Per APPNOTE 4.5.3, the zip64 extra block contains only
+				// fields whose 32-bit counterpart was sentinel-promoted
+				// (0xFFFFFFFF). Reading in fixed order regardless of
+				// promotion misparses asymmetric archives.
+				if f.UncompressedSize == uint32max {
+					if len(eb) < 8 {
+						return ErrFormat
+					}
 					f.UncompressedSize64 = eb.uint64()
 				}
-				if len(eb) >= 8 {
+				if f.CompressedSize == uint32max {
+					if len(eb) < 8 {
+						return ErrFormat
+					}
 					f.CompressedSize64 = eb.uint64()
 				}
-				if len(eb) >= 8 {
+				if uint32(f.headerOffset) == uint32max {
+					if len(eb) < 8 {
+						return ErrFormat
+					}
 					f.headerOffset = int64(eb.uint64())
-				}
-				if len(eb) >= 4 {
-					f.diskNb = int32(eb.uint32())
 				}
 			case winzipAesExtraId:
 				// grab the AE version
