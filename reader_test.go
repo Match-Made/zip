@@ -281,6 +281,25 @@ func TestReader(t *testing.T) {
 	}
 }
 
+func TestNewReader_Failed_ErrEndMultipartOnly(t *testing.T) {
+	path := "./testdata/multipart/datasplit.zip"
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatalf("Failed to open zip %s: %v", path, err)
+	}
+	defer f.Close()
+	stat, err := f.Stat()
+	if err != nil {
+		t.Fatalf("Failed to stat zip file: %v", err)
+	}
+	part := io.NewSectionReader(f, 0, stat.Size())
+
+	_, err = NewReader(part, stat.Size())
+	if err != ErrPartCountMismatch {
+		t.Fatalf("expected error %q, got %q", ErrPartCountMismatch, err)
+	}
+}
+
 func readTestZip(t *testing.T, zt ZipTest) {
 	var z *Reader
 	var err error
@@ -444,9 +463,10 @@ func TestNewMultipartReader(t *testing.T) {
 		paths    []string
 		password string
 		// key val of filename and content len
-		files           map[string]int
-		expectedReadErr string
-		expectedOpenErr string
+		files                map[string]int
+		expectedNewReaderErr string
+		expectedReadErr      string
+		expectedOpenErr      string
 	}{
 		{
 			name: "success non-protected",
@@ -514,6 +534,23 @@ func TestNewMultipartReader(t *testing.T) {
 			},
 		},
 		{
+			name: "failed - missing part",
+			paths: []string{
+				"./testdata/multipart/datasplit.z01",
+				"./testdata/multipart/datasplit.zip",
+			},
+			files:                expectedFilesPng,
+			expectedNewReaderErr: "zip: part count mismatch",
+		},
+		{
+			name: "failed - only end of zip provided",
+			paths: []string{
+				"./testdata/multipart/datasplit.zip",
+			},
+			files:                expectedFilesPng,
+			expectedNewReaderErr: "zip: part count mismatch",
+		},
+		{
 			name: "failed protected - incorrect password",
 			paths: []string{
 				"./testdata/multipart/datasplit-protected.z01",
@@ -554,6 +591,12 @@ func TestNewMultipartReader(t *testing.T) {
 
 			zr, err := NewMultipartReader(parts)
 			if err != nil {
+				if tc.expectedNewReaderErr != "" {
+					if err.Error() != tc.expectedNewReaderErr {
+						t.Fatalf("expected error %q, got %q", tc.expectedNewReaderErr, err)
+					}
+					return
+				}
 				t.Fatalf("Failed to create multipart reader: %v", err)
 			}
 
@@ -709,44 +752,51 @@ func TestIssue8186(t *testing.T) {
 	}
 }
 
+// NOTE: this was made obsoleete by check in Reader.init() that
+// rejects processing only the end of multipart zip and
+// returns ErrEndMultipartOnly.
+// Below constructed zip file has end.diskNbr = 12336
+// and 1 part, conflicting with the logic mentioned above.
+// This test is replaced by TestNewReader_Failed_ErrEndMultipartOnly,
+// but is kept for historical reference.
 // Verify we return ErrUnexpectedEOF when length is short.
-func TestIssue10957(t *testing.T) {
-	data := []byte("PK\x03\x040000000PK\x01\x0200000" +
-		"0000000000000000000\x00" +
-		"\x00\x00\x00\x00\x00000000000000PK\x01" +
-		"\x020000000000000000000" +
-		"00000\v\x00\x00\x00\x00\x00000000000" +
-		"00000000000000PK\x01\x0200" +
-		"00000000000000000000" +
-		"00\v\x00\x00\x00\x00\x00000000000000" +
-		"00000000000PK\x01\x020000<" +
-		"0\x00\x0000000000000000\v\x00\v" +
-		"\x00\x00\x00\x00\x0000000000\x00\x00\x00\x00000" +
-		"00000000PK\x01\x0200000000" +
-		"0000000000000000\v\x00\x00\x00" +
-		"\x00\x0000PK\x05\x06000000\x05\x000000" +
-		"\v\x00\x00\x00\x00\x00")
-	z, err := NewReader(bytes.NewReader(data), int64(len(data)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for i, f := range z.File {
-		r, err := f.Open()
-		if err != nil {
-			continue
-		}
-		if f.UncompressedSize64 < 1e6 {
-			n, err := io.Copy(ioutil.Discard, r)
-			if i == 3 && err != io.ErrUnexpectedEOF {
-				t.Errorf("File[3] error = %v; want io.ErrUnexpectedEOF", err)
-			}
-			if err == nil && uint64(n) != f.UncompressedSize64 {
-				t.Errorf("file %d: bad size: copied=%d; want=%d", i, n, f.UncompressedSize64)
-			}
-		}
-		r.Close()
-	}
-}
+// func TestIssue10957(t *testing.T) {
+// 	data := []byte("PK\x03\x040000000PK\x01\x0200000" +
+// 		"0000000000000000000\x00" +
+// 		"\x00\x00\x00\x00\x00000000000000PK\x01" +
+// 		"\x020000000000000000000" +
+// 		"00000\v\x00\x00\x00\x00\x00000000000" +
+// 		"00000000000000PK\x01\x0200" +
+// 		"00000000000000000000" +
+// 		"00\v\x00\x00\x00\x00\x00000000000000" +
+// 		"00000000000PK\x01\x020000<" +
+// 		"0\x00\x0000000000000000\v\x00\v" +
+// 		"\x00\x00\x00\x00\x0000000000\x00\x00\x00\x00000" +
+// 		"00000000PK\x01\x0200000000" +
+// 		"0000000000000000\v\x00\x00\x00" +
+// 		"\x00\x0000PK\x05\x06000000\x05\x000000" +
+// 		"\v\x00\x00\x00\x00\x00")
+// 	z, err := NewReader(bytes.NewReader(data), int64(len(data)))
+// 	if err != nil {
+// 		t.Fatal(err)
+// 	}
+// 	for i, f := range z.File {
+// 		r, err := f.Open()
+// 		if err != nil {
+// 			continue
+// 		}
+// 		if f.UncompressedSize64 < 1e6 {
+// 			n, err := io.Copy(ioutil.Discard, r)
+// 			if i == 3 && err != io.ErrUnexpectedEOF {
+// 				t.Errorf("File[3] error = %v; want io.ErrUnexpectedEOF", err)
+// 			}
+// 			if err == nil && uint64(n) != f.UncompressedSize64 {
+// 				t.Errorf("file %d: bad size: copied=%d; want=%d", i, n, f.UncompressedSize64)
+// 			}
+// 		}
+// 		r.Close()
+// 	}
+// }
 
 // Verify the number of files is sane.
 func TestIssue10956(t *testing.T) {
@@ -760,6 +810,8 @@ func TestIssue10956(t *testing.T) {
 	}
 }
 
+// NOTE: this was made obsolete by in Reader.init() that validates
+// if f.diskNb cant be greater than end.diskNb, and returns ErrPartCountMismatch.
 // Verify we return ErrUnexpectedEOF when reading truncated data descriptor.
 func TestIssue11146(t *testing.T) {
 	data := []byte("PK\x03\x040000000000000000" +
@@ -768,17 +820,21 @@ func TestIssue11146(t *testing.T) {
 		"0000\b0\b\x00000000000000" +
 		"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x000000PK\x05\x06\x00\x00" +
 		"\x00\x0000\x01\x0000008\x00\x00\x00\x00\x00")
-	z, err := NewReader(bytes.NewReader(data), int64(len(data)))
-	if err != nil {
-		t.Fatal(err)
+	_, err := NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != ErrPartCountMismatch {
+		t.Fatalf("error = %v; want %v", err, ErrPartCountMismatch)
 	}
-	r, err := z.File[0].Open()
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = ioutil.ReadAll(r)
-	if err != io.ErrUnexpectedEOF {
-		t.Errorf("File[0] error = %v; want io.ErrUnexpectedEOF", err)
-	}
-	r.Close()
+	// if err != nil {
+
+	// 	t.Fatal(err)
+	// }
+	// r, err := z.File[0].Open()
+	// if err != nil {
+	// 	t.Fatal(err)
+	// }
+	// _, err = ioutil.ReadAll(r)
+	// if err != io.ErrUnexpectedEOF {
+	// 	t.Errorf("File[0] error = %v; want io.ErrUnexpectedEOF", err)
+	// }
+	// r.Close()
 }
